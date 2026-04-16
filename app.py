@@ -25,6 +25,34 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Force sidebar collapse button to always be visible & prevent total hide
+st.markdown("""
+<style>
+/* Ensure sidebar toggle button is always visible */
+button[kind="header"], [data-testid="collapsedControl"], [data-testid="stSidebarCollapseButton"] {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+/* Make sidebar collapse arrow button more prominent so user can find it */
+[data-testid="stSidebarCollapseButton"] {
+    background: #4caf50 !important;
+    border-radius: 6px !important;
+    padding: 6px !important;
+    z-index: 9999 !important;
+}
+/* When collapsed, ensure expand button is bright and obvious */
+[data-testid="collapsedControl"] {
+    background: #4caf50 !important;
+    color: white !important;
+    border-radius: 0 8px 8px 0 !important;
+    padding: 10px !important;
+    box-shadow: 2px 2px 8px rgba(0,0,0,0.2) !important;
+    z-index: 9999 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # ─── Custom CSS matching screenshot style ───
 st.markdown("""
 <style>
@@ -1488,22 +1516,24 @@ def create_chart(df, ticker, support_levels, resistance_levels, signal_info, tim
 
 with st.sidebar:
     st.markdown("### ⚙️ 系統設定")
+    st.caption("⚠️ 收起側邊欄請點 `<<` 而不是 `X`，否則需重新整理頁面")
 
     # Watchlist
     default_tickers = "TSLA,AMZN,AAPL,NVDA,GOOGL,META"
-    tickers_input = st.text_input(
+    tickers_input_sb = st.text_input(
         "監控股票（逗號分隔）",
         value=default_tickers,
-        help="輸入股票代碼，用逗號分隔"
+        help="輸入股票代碼，用逗號分隔",
+        key="tickers_sb"
     )
-    tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
     # Timeframe
-    timeframe = st.selectbox(
+    timeframe_sb = st.selectbox(
         "時間框架",
         options=list(TIMEFRAME_MAP.keys()),
         index=3,  # default 30m
-        format_func=lambda x: {"1m":"1分鐘","5m":"5分鐘","15m":"15分鐘","30m":"30分鐘","1h":"1小時","1d":"日線","1wk":"週線"}[x]
+        format_func=lambda x: {"1m":"1分鐘","5m":"5分鐘","15m":"15分鐘","30m":"30分鐘","1h":"1小時","1d":"日線","1wk":"週線"}[x],
+        key="tf_sb"
     )
 
     st.markdown("---")
@@ -1549,8 +1579,8 @@ with st.sidebar:
         sr_min_touches = st.number_input("S/R 最少觸碰次數", value=2, min_value=1, max_value=10)
         sr_tolerance = st.slider("S/R 容差 %", min_value=0.1, max_value=1.0, value=0.3, step=0.1)
 
-    # Scan button
-    scan_btn = st.button("🔍 立即掃描", use_container_width=True, type="primary")
+    # Scan button (sidebar copy)
+    scan_btn_sb = st.button("🔍 立即掃描 (側邊欄)", use_container_width=True, type="primary", key="scan_sb")
 
 
 # ═══════════════════════════════════════════════════════
@@ -1566,6 +1596,46 @@ st.markdown("""
     </span>
 </div>
 """, unsafe_allow_html=True)
+
+# ═══ TOP TOOLBAR — mirror of critical sidebar controls (so user can use even with sidebar collapsed) ═══
+with st.container():
+    st.markdown("""
+    <div style="background:#fafaf5;border:1px solid #e8e8e0;border-radius:10px;padding:12px 16px;margin-bottom:12px;">
+        <div style="font-size:12px;color:#6b6b6b;margin-bottom:8px;font-weight:600;">
+            ⚡ 快速控制 (側邊欄收起時也能使用)
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_t1, col_t2, col_t3, col_t4 = st.columns([3, 1.5, 1, 1])
+    with col_t1:
+        tickers_input_main = st.text_input(
+            "監控股票",
+            value=tickers_input_sb,
+            label_visibility="collapsed",
+            placeholder="股票代碼，逗號分隔，如 TSLA,AAPL",
+            key="tickers_main"
+        )
+    with col_t2:
+        timeframe_main = st.selectbox(
+            "時間框架",
+            options=list(TIMEFRAME_MAP.keys()),
+            index=list(TIMEFRAME_MAP.keys()).index(timeframe_sb),
+            format_func=lambda x: {"1m":"1分鐘","5m":"5分鐘","15m":"15分鐘","30m":"30分鐘","1h":"1小時","1d":"日線","1wk":"週線"}[x],
+            label_visibility="collapsed",
+            key="tf_main"
+        )
+    with col_t3:
+        scan_btn_main = st.button("🔍 掃描", use_container_width=True, type="primary", key="scan_main")
+    with col_t4:
+        st.caption(f"⏰ {datetime.now().strftime('%H:%M:%S')}")
+
+# Resolve final values: top toolbar takes precedence (so collapsed-sidebar still works)
+tickers_input = tickers_input_main if tickers_input_main else tickers_input_sb
+timeframe = timeframe_main
+scan_btn = scan_btn_main or scan_btn_sb
+
+tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
 # Initialize session state
 if 'last_signals' not in st.session_state:
