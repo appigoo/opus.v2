@@ -1519,7 +1519,7 @@ with st.sidebar:
     st.caption("⚠️ 收起側邊欄請點 `<<` 而不是 `X`，否則需重新整理頁面")
 
     # Watchlist
-    default_tickers = "TSLA,AMZN,AAPL,NVDA,GOOGL,META"
+    default_tickers = "QQQ,AAPL,META,TSM,XOM,MSFT,NVDA,TSLA,AMD,INTC,GOOGL,XPEV,NIO,VST,RKLB,TSLL,SPCX,ARM,SNDK"
     tickers_input_sb = st.text_input(
         "監控股票（逗號分隔）",
         value=default_tickers,
