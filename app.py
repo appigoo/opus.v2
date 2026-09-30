@@ -1836,6 +1836,88 @@ def run_scan():
     return results
 
 
+
+# ─── AI Summary Prompt Builder ───
+def build_ai_summary_prompt(results, tickers, timeframe, mtf_ticker=None, mtf_summary=None):
+    """把所有股票的分析結果整合成一份可直接貼給 AI 的總結 prompt。"""
+    action_zh = {"STRONG_BUY": "立即做多", "BUY": "做多", "STRONG_SELL": "立即做空",
+                 "SELL": "做空", "HOLD": "不動"}
+    conf_zh = {"HIGH": "高", "MEDIUM": "中", "LOW": "低", "NONE": "無"}
+    ema_zh = {"bullish_strong": "強多頭排列", "bullish": "偏多", "bearish_strong": "強空頭排列",
+              "bearish": "偏空", "neutral": "混亂", "unknown": "未知"}
+    reso_zh = {"strong": "全部共振", "partial": "部分共振", "none": "無共振"}
+    td_zh = {"trend_long": "趨勢日·只做多", "trend_short": "趨勢日·只做空", "normal": "一般日"}
+
+    def f2(v):
+        return f"{v:.2f}" if isinstance(v, (int, float)) and v is not None else "—"
+
+    lines = [
+        "你是一位專業的美股日內 / 短線交易分析師。以下是「三重確認交易系統」剛剛掃描出來的全部分析結果，",
+        "請你整合所有股票與時間框架的資訊，給出明確、可執行的總結。",
+        "",
+        f"掃描時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}　主時間框架：{timeframe}　股票數量：{len(tickers)}",
+        "系統邏輯：趨勢(EMA) + MACD 動能 + 成交量 + 支撐阻力突破，三重確認才開倉；含假突破過濾、ADX 盤整過濾、多時間框架共振。",
+        "",
+        "════════ 各股票分析數據 ════════",
+    ]
+
+    valid = []
+    for t in tickers:
+        r = results.get(t)
+        if r is None:
+            lines += [f"\n【{t}】數據不足，無法分析。"]
+            continue
+        sig = r['signal']
+        valid.append((t, sig))
+        tp = sig.get('trade_plan') or {}
+        reso = sig.get('mtf_resonance') or {}
+        mom = sig.get('macd_momentum') or {}
+        res_txt = ", ".join(f"R {lvl:.2f}({n}次)" for lvl, _, n in (r.get('resistance') or [])[:3]) or "無"
+        sup_txt = ", ".join(f"S {lvl:.2f}({n}次)" for lvl, _, n in (r.get('support') or [])[:3]) or "無"
+        mtf_checks = "; ".join(f"{c['tf']}:{c['reason']}" for c in reso.get('checks', [])) or "—"
+
+        lines += [
+            f"\n【{t}】現價 ${f2(sig['price'])}",
+            f"- 系統訊號：{action_zh.get(sig.get('action', 'HOLD'), '不動')}｜信心 {conf_zh.get(sig.get('confidence', 'NONE'), '—')}｜強度 {sig['strength']}%｜買分 {sig.get('buy_score', 0)} / 賣分 {sig.get('sell_score', 0)} / 淨分 {sig.get('net_score', 0):+.1f}",
+            f"- 進場觸發：{sig.get('entry_trigger') or '—'}",
+            f"- 趨勢：{sig['trend']}（EMA 差距 {sig.get('trend_strength', 0):.2f}%）｜EMA 排列：{ema_zh.get(sig.get('ema_array_state'), '—')}｜高週期狀態：{ema_zh.get(sig.get('higher_tf_state'), '—')}",
+            f"- MACD：DIF {sig['dif']:.3f} / DEA {sig['dea']:.3f}｜柱量 {sig['histogram']:.3f}｜動能：{mom.get('desc', '—')}｜交叉：{sig.get('macd_cross', '—')}",
+            f"- 成交量：量比 {sig['vol_ratio']:.2f}x（{'放量' if sig.get('vol_surge') else '正常'}）",
+            f"- 支撐阻力：{sig.get('sr_status', '—')}｜突破品質：{sig.get('breakout_quality', '—')}｜假突破：{'是 ⚠️' if sig.get('is_fake_breakout') else '否'}",
+            f"- 關鍵價位：{res_txt} ／ {sup_txt}",
+            f"- 市場狀態：ADX {sig.get('adx', 0):.0f}（{'盤整' if sig.get('is_choppy') else ('趨勢' if sig.get('is_trending') else '中性')}）｜{td_zh.get(sig.get('trend_day_mode', 'normal'), '一般日')}｜ATR ${f2(sig.get('atr'))}",
+            f"- 多時間框架共振：{reso_zh.get(reso.get('state', 'none'), '—')}（{mtf_checks}）",
+        ]
+        if tp.get('stop_loss') is not None and sig.get('signal_type') != 'hold':
+            lines.append(
+                f"- 交易計劃：進場 ${f2(tp.get('entry'))}｜止損 ${f2(tp.get('stop_loss'))}｜TP1 ${f2(tp.get('tp1'))}(平50%)｜TP2 ${f2(tp.get('tp2'))}｜R:R 1:{f2(tp.get('risk_reward'))}｜建議倉位 {tp.get('position_size_pct', 0)}%"
+                + ("｜TP1 後移動止損" if tp.get('use_trailing_stop') else "")
+            )
+        else:
+            lines.append("- 交易計劃：無（未達開倉條件）")
+
+    if mtf_summary:
+        lines += ["", f"════════ {mtf_ticker} 多時間框架總覽 ════════"]
+        for m in mtf_summary:
+            if not m.get('ok'):
+                lines.append(f"- {m['label']}：數據不足")
+            else:
+                lines.append(f"- {m['label']}：{m['signal']}｜趨勢{'多' if m['trend_bull'] else '空'}｜MACD{'多' if m['macd_bull'] else '空'}｜強度 {m['strength']}%")
+
+    lines += [
+        "",
+        "════════ 請依以下格式輸出（繁體中文）════════",
+        "1. 【市場總覽】一段話：整體偏多 / 偏空 / 分歧，以及最強與最弱的股票。",
+        "2. 【優先順序表格】欄位：排名｜股票｜方向｜信心｜進場｜止損｜TP1｜TP2｜R:R｜倉位%。只列有明確機會的股票，依風險報酬與訊號品質排序。",
+        "3. 【各股簡評】每檔 2-3 句：三重確認哪幾項成立、哪幾項缺失、多時間框架是否支持。",
+        "4. 【風險警示】列出假突破、盤整(ADX<20)、共振分歧、量能不足等疑慮，並說明哪些訊號應該放棄。",
+        "5. 【最終建議】直接給結論：現在應該做什麼（做多哪檔 / 做空哪檔 / 觀望），不要模稜兩可。",
+        "",
+        "規則：只根據上述數據判斷，不要編造數字；價格請用具體金額；若數據互相矛盾請明說並以風險控管優先。",
+    ]
+    return "\n".join(lines)
+
+
 # ─── Run scan ───
 if scan_btn or auto_refresh:
     results = run_scan()
@@ -2241,12 +2323,14 @@ if scan_btn or auto_refresh:
         all_tfs = ["1m", "5m", "15m", "30m", "1h", "1d", "1wk"]
         tf_labels = {"1m":"1分鐘","5m":"5分鐘","15m":"15分鐘","30m":"30分鐘","1h":"1小時","1d":"日線","1wk":"週線"}
 
+        mtf_summary = []
         mtf_cols = st.columns(len(all_tfs))
         for ci, tf_key in enumerate(all_tfs):
             with mtf_cols[ci]:
                 tf_cfg = TIMEFRAME_MAP[tf_key]
                 mtf_df = fetch_data(mtf_ticker, tf_cfg['interval'], tf_cfg['period'])
                 if mtf_df.empty or len(mtf_df) < 30:
+                    mtf_summary.append({'label': tf_labels[tf_key], 'ok': False})
                     st.markdown(f"""
                     <div class="signal-card hold-signal" style="text-align:center;padding:10px;">
                         <div style="font-size:12px;font-weight:600;">{tf_labels[tf_key]}</div>
@@ -2267,6 +2351,12 @@ if scan_btn or auto_refresh:
                 sup_m, res_m = find_support_resistance(sr_df_mtf, min_touches=sr_min_touches, tolerance_pct=sr_tolerance/100)
                 sig_m = analyze_signals(mtf_df, sup_m, res_m)
 
+                mtf_summary.append({
+                    'label': tf_labels[tf_key], 'ok': True, 'signal': sig_m['signal'],
+                    'trend_bull': bool(sig_m.get('trend_bullish')),
+                    'macd_bull': bool(sig_m['dif'] > sig_m['dea']),
+                    'strength': sig_m['strength'],
+                })
                 sig_type_m = sig_m['signal_type']
                 if sig_type_m in ('strong_buy', 'buy', 'watch_buy'):
                     card_cls = "normal-buy" if sig_type_m != 'strong_buy' else "strong-buy"
@@ -2296,6 +2386,20 @@ if scan_btn or auto_refresh:
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+
+        # ═══ AI Summary Prompt ═══
+        st.markdown("---")
+        st.markdown("### 🤖 AI 總結 Prompt")
+        st.caption("自動整合所有股票、交易計劃、關鍵價位與多時間框架結果。點右上角複製，貼到 Claude / ChatGPT 即可。")
+        ai_prompt = build_ai_summary_prompt(results, tickers, timeframe, mtf_ticker, mtf_summary)
+        st.code(ai_prompt, language=None)
+        st.download_button(
+            "⬇️ 下載 Prompt (.txt)",
+            data=ai_prompt.encode("utf-8"),
+            file_name=f"ai_summary_prompt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            mime="text/plain",
+            key=f"dl_prompt_{st.session_state.scan_count}",
+        )
 
         # ─── Scan info footer ───
         st.markdown(f"""
